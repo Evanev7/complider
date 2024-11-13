@@ -22,6 +22,7 @@
         cargo
         rustc
         rust-analyzer
+        rustfmt
         libxkbcommon
         wayland xorg.libX11 xorg.libXcursor xorg.libXrandr xorg.libXi
         alsa-lib
@@ -34,6 +35,7 @@
         vulkan-validation-layers
       ];
 
+      RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
       LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${builtins.toString (pkgs.lib.makeLibraryPath buildInputs)}";
     };
   };
