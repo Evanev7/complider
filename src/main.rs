@@ -42,9 +42,9 @@ struct App<'a> {
     window: &'a Window,
     clear_color: Color,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
+    /*vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    num_indices: u32,
+    num_indices: u32,*/
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: Texture,
     camera: Camera,
@@ -55,6 +55,7 @@ struct App<'a> {
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
+    obj_model: Model,
 }
 
 async fn run() {
@@ -218,7 +219,7 @@ impl<'a> App<'a> {
             aspect: config.width as f32 / config.height as f32,
             fovy: 45.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 1000.0,
         };
 
         let mut camera_uniform = CameraUniform::new();
@@ -286,7 +287,11 @@ impl<'a> App<'a> {
             vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: "main",
-                buffers: &[OldVertex::desc(), InstanceRaw::desc()],
+                buffers: &[
+                    ModelVertex::desc(),
+                    InstanceRaw::desc(),
+                    ColouredVertex::desc(),
+                ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -323,7 +328,7 @@ impl<'a> App<'a> {
             multiview: None,
             cache: None,
         });
-
+        /*
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
@@ -335,13 +340,14 @@ impl<'a> App<'a> {
             usage: wgpu::BufferUsages::INDEX,
         });
         let num_indices = INDICES.len() as u32;
-
+        */
+        const SPACE_BETWEEN: f32 = 10.0;
         let instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|y| {
                 (0..NUM_INSTANCES_PER_ROW).map(move |x| {
                     let position = Vec3 {
-                        x: x as f32,
-                        y: y as f32,
+                        x: SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0),
+                        y: SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0),
                         z: 0.0,
                     } - INSTANCE_DISPLACEMENT;
                     let rotation = if position.length() == 0.0 {
@@ -362,6 +368,11 @@ impl<'a> App<'a> {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        let obj_model =
+            resources::load_model("CarExport.obj", &device, &queue, &texture_bind_group_layout)
+                .await
+                .unwrap();
+
         Self {
             surface,
             device,
@@ -371,9 +382,9 @@ impl<'a> App<'a> {
             window,
             clear_color,
             render_pipeline,
-            vertex_buffer,
+            /*vertex_buffer,
             index_buffer,
-            num_indices,
+            num_indices,*/
             diffuse_bind_group,
             diffuse_texture,
             camera,
@@ -384,6 +395,7 @@ impl<'a> App<'a> {
             instances,
             instance_buffer,
             depth_texture,
+            obj_model,
         }
     }
 
@@ -456,13 +468,19 @@ impl<'a> App<'a> {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as u32);
+            render_pass.set_pipeline(&self.render_pipeline);
+
+            render_pass.draw_model_instanced(
+                &self.obj_model,
+                0..self.instances.len() as u32,
+                &self.camera_bind_group,
+            );
+
+            //render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            // was here
+            //render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16); // 1.
+            //render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as u32);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
