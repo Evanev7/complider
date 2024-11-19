@@ -17,6 +17,10 @@ mod texture;
 use crate::texture::*;
 mod camera;
 use crate::camera::*;
+mod model;
+use crate::model::*;
+mod resources;
+use crate::resources::*;
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
 const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3::new(
@@ -24,6 +28,10 @@ const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3::new(
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
     0.0,
 );
+
+fn main() {
+    pollster::block_on(run())
+}
 
 struct App<'a> {
     surface: wgpu::Surface<'a>,
@@ -46,10 +54,7 @@ struct App<'a> {
     camera_controller: CameraController,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
-}
-
-fn main() {
-    pollster::block_on(run())
+    depth_texture: Texture,
 }
 
 async fn run() {
@@ -163,9 +168,9 @@ impl<'a> App<'a> {
         };
         surface.configure(&device, &config);
 
-        let diffuse_bytes = include_bytes!("happy-tree.png");
+        let diffuse_bytes = include_bytes!("car.png");
         let diffuse_texture =
-            Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
+            Texture::from_bytes(&device, &queue, diffuse_bytes, "car.png").unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -247,6 +252,7 @@ impl<'a> App<'a> {
             label: Some("camera_bind_group"),
         });
         let camera_controller = CameraController::new(0.01, 0.01);
+        let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
         let vs_src = wgpu::ShaderSource::Glsl {
             shader: std::borrow::Cow::Borrowed(include_str!("shader.vert")),
@@ -280,7 +286,7 @@ impl<'a> App<'a> {
             vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: "main",
-                buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                buffers: &[OldVertex::desc(), InstanceRaw::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -302,7 +308,13 @@ impl<'a> App<'a> {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -371,6 +383,7 @@ impl<'a> App<'a> {
             camera_controller,
             instances,
             instance_buffer,
+            depth_texture,
         }
     }
 
@@ -384,6 +397,8 @@ impl<'a> App<'a> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.depth_texture =
+                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }
 
@@ -429,7 +444,14 @@ impl<'a> App<'a> {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
