@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::f32::consts::PI;
+use std::{f32::consts::PI, time::Instant};
 
 use glam::*;
 use wgpu::{util::DeviceExt, Color};
@@ -21,6 +21,8 @@ mod model;
 use crate::model::*;
 mod resources;
 use crate::resources::*;
+mod light;
+use crate::light::*;
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
 const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3::new(
@@ -56,6 +58,9 @@ struct App<'a> {
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
     obj_model: Model,
+    light_uniform: LightUniform,
+    light_bind_group: wgpu::BindGroup,
+    light_buffer: wgpu::Buffer,
 }
 
 async fn run() {
@@ -65,49 +70,76 @@ async fn run() {
 
     let mut app = App::new(&window).await;
 
-    event_loop.run(|event, control_flow| match event {
-        Event::WindowEvent {
-            ref event,
-            window_id,
-        } if window_id == app.window.id() && !app.input(event) => match event {
-            WindowEvent::CloseRequested
-            | WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::Escape),
-                        ..
-                    },
-                ..
-            } => control_flow.exit(),
-            WindowEvent::Resized(phyiscal_size) => {
-                app.resize(*phyiscal_size);
-            }
-            WindowEvent::RedrawRequested => {
-                app.window().request_redraw();
+    let mut time_buffer = [0f64; 30000];
+    let mut index: usize = 0;
+    let mut now = Instant::now();
 
-                app.update();
-                match app.render() {
-                    Ok(_) => {}
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        app.resize(app.size)
-                    }
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                        log::error!("OutOfMemory");
-                        control_flow.exit();
-                    }
-                    Err(wgpu::SurfaceError::Timeout) => {
-                        log::warn!("Surface timeout")
+    let mut now_alt = Instant::now();
+    let mut frames = 0u32;
+
+    event_loop.run(|event, control_flow| {
+        frames += 1;
+        if now_alt.elapsed().as_secs() > 0 {
+            println!(
+                "FPS alt: {}",
+                frames as f64 / now_alt.elapsed().as_secs_f64()
+            );
+            frames = 0;
+            now_alt = Instant::now();
+        }
+        time_buffer[index] = now.elapsed().as_secs_f64();
+        now = Instant::now();
+        index = (index + 1) % time_buffer.len();
+        if index == 0 {
+            println!(
+                "FPS: {}",
+                time_buffer.len() as f64 / (time_buffer.iter().fold(0.0, |acc, t| acc + t))
+            )
+        }
+        match event {
+            Event::WindowEvent {
+                ref event,
+                window_id,
+            } if window_id == app.window.id() && !app.input(event) => match event {
+                WindowEvent::CloseRequested
+                | WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            state: ElementState::Pressed,
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
+                            ..
+                        },
+                    ..
+                } => control_flow.exit(),
+                WindowEvent::Resized(phyiscal_size) => {
+                    app.resize(*phyiscal_size);
+                }
+                WindowEvent::RedrawRequested => {
+                    app.window().request_redraw();
+
+                    app.update();
+                    match app.render() {
+                        Ok(_) => {}
+                        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                            app.resize(app.size)
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                            log::error!("OutOfMemory");
+                            control_flow.exit();
+                        }
+                        Err(wgpu::SurfaceError::Timeout) => {
+                            log::warn!("Surface timeout")
+                        }
                     }
                 }
-            }
+                _ => {}
+            },
+            Event::DeviceEvent {
+                ref event,
+                device_id,
+            } if !app.device_input(event) => {}
             _ => {}
-        },
-        Event::DeviceEvent {
-            ref event,
-            device_id,
-        } if !app.device_input(event) => {}
-        _ => {}
+        }
     });
 }
 
@@ -255,6 +287,41 @@ impl<'a> App<'a> {
         let camera_controller = CameraController::new(0.01, 0.01);
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
+        let light_uniform = LightUniform {
+            position: [2.0, 2.0, 2.0],
+            _padding: 0.,
+            colour: [1.0, 1.0, 1.0],
+            _padding2: 0.,
+        };
+        let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Light VB"),
+            contents: bytemuck::cast_slice(&[light_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let light_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: None,
+            });
+
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            }],
+            label: None,
+        });
+
         let vs_src = wgpu::ShaderSource::Glsl {
             shader: std::borrow::Cow::Borrowed(include_str!("shader.vert")),
             stage: wgpu::naga::ShaderStage::Vertex,
@@ -277,7 +344,11 @@ impl<'a> App<'a> {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
+                bind_group_layouts: &[
+                    &texture_bind_group_layout,
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout,
+                ],
                 push_constant_ranges: &[],
             });
 
@@ -287,11 +358,7 @@ impl<'a> App<'a> {
             vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: "main",
-                buffers: &[
-                    ModelVertex::desc(),
-                    InstanceRaw::desc(),
-                    ColouredVertex::desc(),
-                ],
+                buffers: &[ModelVertex::desc(), InstanceRaw::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -396,6 +463,9 @@ impl<'a> App<'a> {
             instance_buffer,
             depth_texture,
             obj_model,
+            light_uniform,
+            light_buffer,
+            light_bind_group,
         }
     }
 
@@ -429,6 +499,15 @@ impl<'a> App<'a> {
             &self.camera_buffer,
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+
+        let old_position: Vec3 = self.light_uniform.position.into();
+        self.light_uniform.position =
+            (Quat::from_axis_angle((0., 0., 1.).into(), PI / 180.) * old_position).into();
+        self.queue.write_buffer(
+            &self.light_buffer,
+            0,
+            bytemuck::cast_slice(&[self.light_uniform]),
         );
     }
 
