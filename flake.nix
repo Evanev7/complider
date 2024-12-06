@@ -28,6 +28,9 @@
         alsa-lib
         shaderc directx-shader-compiler
 
+        bacon
+        clippy
+
         libGL
         vulkan-headers vulkan-loader
         vulkan-tools vulkan-tools-lunarg

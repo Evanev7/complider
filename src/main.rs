@@ -80,70 +80,68 @@ async fn run() {
     let mut now_alt = Instant::now();
     let mut frames = 0u32;
 
-    event_loop.run(|event, control_flow| {
-        frames += 1;
-        if now_alt.elapsed().as_secs_f32() >= 1. {
-            println!(
-                "FPS alt: {}",
-                frames as f32 / now_alt.elapsed().as_secs_f32()
-            );
-            frames = 0;
-            now_alt = Instant::now();
-        }
-        time_buffer[index] = now.elapsed().as_secs_f32();
-        now = Instant::now();
-        index = (index + 1) % time_buffer.len();
-        if index == 0 {
-            println!(
-                "FPS: {}",
-                time_buffer.len() as f32 / (time_buffer.iter().fold(0.0, |acc, t| acc + t))
-            )
-        }
-        match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } if window_id == app.window.id() && !app.input(event) => match event {
-                WindowEvent::CloseRequested
-                | WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            state: ElementState::Pressed,
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            ..
-                        },
-                    ..
-                } => control_flow.exit(),
-                WindowEvent::Resized(phyiscal_size) => {
-                    app.resize(*phyiscal_size);
+    event_loop.run(|event, control_flow| match event {
+        Event::WindowEvent {
+            ref event,
+            window_id,
+        } if window_id == app.window.id() && !app.input(event) => match event {
+            WindowEvent::CloseRequested
+            | WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        ..
+                    },
+                ..
+            } => control_flow.exit(),
+            WindowEvent::Resized(phyiscal_size) => {
+                app.resize(*phyiscal_size);
+            }
+            WindowEvent::RedrawRequested => {
+                frames += 1;
+                if now_alt.elapsed().as_secs_f32() >= 1. {
+                    println!(
+                        "FPS alt: {}",
+                        frames as f32 / now_alt.elapsed().as_secs_f32()
+                    );
+                    frames = 0;
+                    now_alt = Instant::now();
                 }
-                WindowEvent::RedrawRequested => {
-                    app.window().request_redraw();
-                    let delta = delta_timer.elapsed().as_secs_f32();
-                    delta_timer = Instant::now();
-                    app.update(delta);
-                    match app.render() {
-                        Ok(_) => {}
-                        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                            app.resize(app.size)
-                        }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            log::error!("OutOfMemory");
-                            control_flow.exit();
-                        }
-                        Err(wgpu::SurfaceError::Timeout) => {
-                            log::warn!("Surface timeout")
-                        }
+                time_buffer[index] = now.elapsed().as_secs_f32();
+                now = Instant::now();
+                index = (index + 1) % time_buffer.len();
+                if index == 0 {
+                    println!(
+                        "FPS: {}",
+                        time_buffer.len() as f32 / (time_buffer.iter().fold(0.0, |acc, t| acc + t))
+                    )
+                }
+                app.window().request_redraw();
+                let delta = delta_timer.elapsed().as_secs_f32();
+                delta_timer = Instant::now();
+                app.update(delta);
+                match app.render() {
+                    Ok(_) => {}
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        app.resize(app.size)
+                    }
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        log::error!("OutOfMemory");
+                        control_flow.exit();
+                    }
+                    Err(wgpu::SurfaceError::Timeout) => {
+                        log::warn!("Surface timeout")
                     }
                 }
-                _ => {}
-            },
-            Event::DeviceEvent {
-                ref event,
-                device_id,
-            } if !app.device_input(event) => {}
+            }
             _ => {}
-        }
+        },
+        Event::DeviceEvent {
+            ref event,
+            device_id,
+        } if !app.device_input(event) => {}
+        _ => {}
     });
 }
 
@@ -286,12 +284,12 @@ impl<'a> App<'a> {
             }],
             label: Some("camera_bind_group"),
         });
-        let camera_controller = CameraController::new(0.01, 0.01);
+        let camera_controller = CameraController::new(0.1, 0.01);
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
         let light_uniform = LightUniform {
             position: [2.0, 2.0, 2.0],
-            _padding: 0.,
+            angle: 0.,
             colour: [1.0, 1.0, 1.0],
             _padding2: 0.,
         };
@@ -469,7 +467,7 @@ impl<'a> App<'a> {
     }
 
     pub fn window(&self) -> &Window {
-        &self.window
+        self.window
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -500,9 +498,13 @@ impl<'a> App<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
 
-        let old_position: Vec3 = self.light_uniform.position.into();
-        self.light_uniform.position =
-            (Quat::from_axis_angle((0., 0., 1.).into(), PI * delta) * old_position).into();
+        self.light_uniform.angle += PI * delta;
+        self.light_uniform.position = [
+            2.0 * f32::cos(self.light_uniform.angle),
+            2.0 * f32::sin(self.light_uniform.angle),
+            2.0,
+        ];
+        //(Quat::from_axis_angle((0., 0., 1.).into(), PI * delta) * old_position).into();
         self.queue.write_buffer(
             &self.light_buffer,
             0,

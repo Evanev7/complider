@@ -12,13 +12,25 @@ uniform Uniforms {
 layout(set=1, binding=0)
 uniform Light {
     vec3 upos;
+    float angle;
     vec3 ucolour;
 };
 
 float scale = 0.25;
 
+mat3 base_rot = mat3(
+    1, 0, 0,
+    0, 0, 1,
+    0, -1, 0
+);
+
 void main() {
-    vec3 vpos = ipos * scale + upos;
+    mat3 vroom_vroom = mat3(
+        -cos(angle), 0, sin(angle),
+        0, 1, 0,
+        -sin(angle), 0, -cos(angle)
+    );
+    vec3 vpos = base_rot * vroom_vroom * ipos * scale + upos;
     gl_Position = uviewproj * vec4(vpos, 1);
 
     vcolour = ucolour;
