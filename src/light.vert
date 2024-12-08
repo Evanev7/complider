@@ -6,6 +6,7 @@ layout(location=0) out vec3 vcolour;
 
 layout(set=0, binding=0)
 uniform Uniforms {
+    vec4 uviewpos;
     mat4 uviewproj;
 };
 

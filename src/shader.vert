@@ -13,9 +13,13 @@ layout(location = 5) in vec4 imod0;
 layout(location = 6) in vec4 imod1;
 layout(location = 7) in vec4 imod2;
 layout(location = 8) in vec4 imod3;
+layout(location = 9) in vec3 inormmat0;
+layout(location = 10) in vec3 inormmat1;
+layout(location = 11) in vec3 inormmat2;
 
 layout(set=1, binding=0)
 uniform Uniforms {
+    vec4 uviewpos;
     mat4 uviewproj;
 };
 
@@ -27,7 +31,11 @@ void main() {
         imod3
     );
     vtexc = itexc;
-    mat3 normal_matrix = mat3(transpose(inverse(imod)));
+    mat3 normal_matrix = mat3(
+        inormmat0,
+        inormmat1,
+        inormmat2
+    );
     vnorm = normal_matrix * inorm;
     vec4 model_space = imod * vec4(ipos, 1.0);
     vpos = model_space.xyz;

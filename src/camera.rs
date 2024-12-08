@@ -19,23 +19,26 @@ impl Camera {
         let view = Mat4::look_at_rh(self.eye, self.target, self.up);
         let proj = Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar);
 
-        return proj * view;
+        proj * view
     }
 }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform {
+    view_position: [f32; 4],
     view_proj: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
     pub fn new() -> Self {
         Self {
+            view_position: [0.0; 4],
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
     pub fn update_view_proj(&mut self, camera: &Camera) {
+        self.view_position = [camera.eye.x, camera.eye.y, camera.eye.z, 1.0];
         self.view_proj = camera.build_view_projection_matrix().to_cols_array_2d();
     }
 }
@@ -132,11 +135,7 @@ impl CameraController {
                     self.rmbmotion.1 += delta.1 as f32;
                     self.scroll += delta.1 as f32 * self.speed;
                 }
-                if (self.lmb || self.mmb || self.rmb) {
-                    true
-                } else {
-                    false
-                }
+                self.lmb || self.mmb || self.rmb
             }
             _ => false,
         }
