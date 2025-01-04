@@ -95,6 +95,16 @@ async fn run() {
                     },
                 ..
             } => control_flow.exit(),
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(KeyCode::Space),
+                        ..
+                    },
+                ..
+            } => {
+                app.save();
+            }
             WindowEvent::Resized(phyiscal_size) => {
                 app.resize(*phyiscal_size);
             }
@@ -134,6 +144,7 @@ async fn run() {
                         log::warn!("Surface timeout")
                     }
                 }
+                app.save();
             }
             _ => {}
         },
@@ -510,6 +521,143 @@ impl<'a> App<'a> {
             0,
             bytemuck::cast_slice(&[self.light_uniform]),
         );
+    }
+
+    fn save(&mut self) -> Result<(), wgpu::SurfaceError> {
+        let texture_size = (128u32, 128u32);
+        let texture_desc = wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: texture_size.0,
+                height: texture_size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            view_formats: Default::default(),
+            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            label: None,
+        };
+        let texture = self.device.create_texture(&texture_desc);
+        let texture_view = texture.create_view(&Default::default());
+
+        let size = wgpu::Extent3d {
+            width: texture_size.0,
+            height: texture_size.1,
+            depth_or_array_layers: 1,
+        };
+        let desc = wgpu::TextureDescriptor {
+            label: Some("smol depth texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Texture::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        };
+        let depth_texture = self.device.create_texture(&desc);
+        let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let u32_size = std::mem::size_of::<u32>() as u32;
+        let output_buffer_size =
+            (u32_size * texture_size.0 * texture_size.1) as wgpu::BufferAddress;
+        let output_buffer_desc = wgpu::BufferDescriptor {
+            size: output_buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            label: None,
+            mapped_at_creation: false,
+        };
+        let output_buffer = self.device.create_buffer(&output_buffer_desc);
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        {
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &texture_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(self.clear_color),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth_texture_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                render_pass.set_pipeline(&self.light_render_pipeline);
+                render_pass.draw_light_model(
+                    &self.obj_model,
+                    &self.camera_bind_group,
+                    &self.light_bind_group,
+                );
+                render_pass.set_pipeline(&self.render_pipeline);
+
+                render_pass.draw_model_instanced(
+                    &self.obj_model,
+                    0..self.instances.len() as u32,
+                    &self.camera_bind_group,
+                    &self.light_bind_group,
+                );
+            }
+        }
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &output_buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(u32_size * texture_size.0),
+                    rows_per_image: Some(texture_size.1),
+                },
+            },
+            texture_desc.size,
+        );
+        self.queue.submit(Some(encoder.finish()));
+        // We need to scope the mapping variables so that we can
+        // unmap the buffer
+        {
+            let buffer_slice = output_buffer.slice(..);
+
+            // NOTE: We have to create the mapping THEN device.poll() before await
+            // the future. Otherwise the application will freeze.
+            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                result.unwrap();
+            });
+            self.device.poll(wgpu::Maintain::Wait);
+
+            let data = buffer_slice.get_mapped_range();
+
+            use image::{ImageBuffer, Rgba};
+            let buffer =
+                ImageBuffer::<Rgba<u8>, _>::from_raw(texture_size.0, texture_size.1, data).unwrap();
+            buffer.save("image.png").unwrap();
+        }
+        output_buffer.unmap();
+        Ok(())
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
