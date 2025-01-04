@@ -511,8 +511,8 @@ impl<'a> App<'a> {
 
         self.light_uniform.angle += PI * delta;
         self.light_uniform.position = [
-            2.0 * f32::cos(self.light_uniform.angle),
-            2.0 * f32::sin(self.light_uniform.angle),
+            20.0 * f32::cos(self.light_uniform.angle),
+            20.0 * f32::sin(self.light_uniform.angle),
             2.0,
         ];
         //(Quat::from_axis_angle((0., 0., 1.).into(), PI * delta) * old_position).into();
@@ -736,8 +736,8 @@ fn create_render_pipeline(
 ) -> wgpu::RenderPipeline {
     let vs_module = device.create_shader_module(vs_src);
     let fs_module = device.create_shader_module(fs_src);
-
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let t = Instant::now();
+    let p = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -779,5 +779,7 @@ fn create_render_pipeline(
         },
         multiview: None,
         cache: None,
-    })
+    });
+    println!("created render pipeline in {}μs", t.elapsed().as_micros());
+    p
 }
